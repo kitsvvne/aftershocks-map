@@ -583,14 +583,60 @@ async function fetchSeismic(){
   setTimeout(fetchSeismic,30000);
 }
 
-async function fetchKp(){
+// Magnetometer stations — real locations, field strength in nT
+const MAG_STATIONS = [
+  {id:'BRW',name:'Barrow AK'},    {id:'CMO',name:'College AK'},
+  {id:'SIT',name:'Sitka AK'},     {id:'VIC',name:'Victoria BC'},
+  {id:'FRD',name:'Fredericksburg'},{id:'BOU',name:'Boulder CO'},
+  {id:'TUC',name:'Tucson AZ'},    {id:'HON',name:'Honolulu HI'},
+  {id:'SJG',name:'San Juan PR'},  {id:'GUA',name:'Guam'},
+  {id:'THL',name:'Thule'},        {id:'ABK',name:'Abisko'},
+  {id:'LYC',name:'Lycksele'},     {id:'NUR',name:'Nurmijarvi'},
+  {id:'ESK',name:'Eskdalemuir'},  {id:'HAD',name:'Hartland'},
+];
+
+async function fetchGeomagnetic(){
+  // Fetch 1-minute Kp for HUD display
   try{
     const r=await fetch('https://services.swpc.noaa.gov/json/planetary_k_index_1m.json');
     const d=await r.json();
+    if(d&&d.length) kp=parseFloat(d[d.length-1].kp_index)||2;
+    document.getElementById('s4').innerHTML=`GEOMAGNETIC &nbsp;<span>Kp ${kp.toFixed(1)}</span>`;
+  }catch(e){}
+
+  // Fetch recent magnetometer data for particle assignment
+  try{
+    const now=new Date();
+    const start=new Date(now-2*3600000); // last 2 hours
+    const fmt=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}T${String(d.getHours()).padStart(2,'0')}%3A${String(d.getMinutes()).padStart(2,'0')}%3A00`;
+    const url=`https://services.swpc.noaa.gov/json/geomag/geomag.json?starttime=${fmt(start)}&endtime=${fmt(now)}&elements=H`;
+    const r=await fetch(url);
+    const d=await r.json();
+
     if(d&&d.length){
-      kp=parseFloat(d[d.length-1].kp_index)||2;
-      document.getElementById('s4').innerHTML=`GEOMAGNETIC &nbsp;<span>Kp ${kp.toFixed(1)}</span>`;
-      pts.forEach(p=>{if(p.lastEventType==='geomagnetic')p.lastEvent=`Kp ${kp.toFixed(1)}`;});
+      const geoPts=pts.filter(p=>p.homeType===4);
+      geoPts.forEach((p,idx)=>{
+        // Round-robin stations, pick a recent reading for each
+        const station=MAG_STATIONS[idx%MAG_STATIONS.length];
+        const stationData=d.filter(row=>row.station===station.id&&row.H>0);
+        if(stationData.length){
+          const reading=stationData[Math.floor(Math.random()*stationData.length)];
+          const nT=Math.round(reading.H);
+          const minsAgo=Math.round((now-new Date(reading.time))/60000);
+          const timeLabel=minsAgo<1?'just now':`${minsAgo}m ago`;
+          p.lastEvent=`${station.name} · ${nT.toLocaleString()} nT · ${timeLabel}`;
+          p.lastEventType='geomagnetic';
+          // Normalize field strength for brightness — typical range 20000-60000 nT
+          const norm=Math.max(0,Math.min(1,(nT-20000)/40000));
+          p.base=0.15+norm*0.35;
+          p.energy=p.base+Math.random()*0.1;
+        } else {
+          // No data for this station — assign station name + Kp fallback
+          p.lastEvent=`${station.name} · Kp ${kp.toFixed(1)}`;
+          p.lastEventType='geomagnetic';
+        }
+      });
+      // Agitate if Kp is high
       if(kp>4){
         pts.forEach(p=>{
           if(p.homeType!==4)return;
@@ -598,9 +644,26 @@ async function fetchKp(){
           p.vx+=(Math.random()-.5)*boost;p.vy+=(Math.random()-.5)*boost;p.vz+=(Math.random()-.5)*boost;
         });
       }
+    } else {
+      // API returned nothing — fall back to station names + Kp
+      const geoPts=pts.filter(p=>p.homeType===4);
+      geoPts.forEach((p,idx)=>{
+        const station=MAG_STATIONS[idx%MAG_STATIONS.length];
+        p.lastEvent=`${station.name} · Kp ${kp.toFixed(1)}`;
+        p.lastEventType='geomagnetic';
+      });
     }
-  }catch(e){document.getElementById('s4').innerHTML=`GEOMAGNETIC &nbsp;<span>—</span>`;}
-  setTimeout(fetchKp,180000);
+  }catch(e){
+    // Full fallback — station names with Kp
+    const geoPts=pts.filter(p=>p.homeType===4);
+    geoPts.forEach((p,idx)=>{
+      const station=MAG_STATIONS[idx%MAG_STATIONS.length];
+      p.lastEvent=`${station.name} · Kp ${kp.toFixed(1)}`;
+      p.lastEventType='geomagnetic';
+    });
+    document.getElementById('s4').innerHTML=`GEOMAGNETIC &nbsp;<span>Kp ${kp.toFixed(1)}</span>`;
+  }
+  setTimeout(fetchGeomagnetic,180000); // refresh every 3 minutes
 }
 
 function connectLightning(){
@@ -644,6 +707,7 @@ function loop(ts){
   wireframes[1].scale.setScalar(1+solarNow*0.08+Math.sin(t_global*0.4)*solarNow*0.03);
   wireframes[2].scale.setScalar(1+seismicPulse*0.12);
   wireframes[3].scale.setScalar(1+Math.min(lightningRate/8,1)*0.09+Math.sin(t_global*0.6)*0.012);
+  // Geomagnetic breathing still uses kp (set inside fetchGeomagnetic)
   wireframes[4].scale.setScalar(1+(kp/9)*0.07+Math.sin(t_global*0.25)*0.02);
 
   pts.forEach((p,i)=>{
@@ -679,7 +743,7 @@ function loop(ts){
 }
 
 // ─── BOOT ────────────────────────────────────────────────────
-fetchSolar();fetchSeismic();fetchKp();connectLightning();
+fetchSolar();fetchSeismic();fetchGeomagnetic();connectLightning();
 requestAnimationFrame(loop);
 
 addEventListener('resize',()=>{
