@@ -2,9 +2,10 @@
 <html>
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
-body { background:#000; overflow:hidden; font-family:'Courier New',monospace; }
+body { background:#000; overflow:hidden; font-family:'Courier New',monospace; touch-action:none; }
 #c { display:block; }
 #overlay { position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; }
 .tag {
@@ -17,10 +18,12 @@ body { background:#000; overflow:hidden; font-family:'Courier New',monospace; }
   background:linear-gradient(rgba(100,255,255,0.6),transparent); margin:3px auto 0;
 }
 #hud {
-  position:fixed; bottom:24px; left:24px; color:rgba(255,255,255,0.35);
+  position:fixed; bottom:24px; left:16px; color:rgba(255,255,255,0.35);
   font-size:9px; letter-spacing:2px; line-height:2.2; text-transform:uppercase;
 }
 #hud span { color:rgba(255,255,255,0.65); }
+
+/* Info panel — desktop */
 #info {
   position:fixed; top:24px; left:24px; font-size:8.5px; letter-spacing:1.4px;
   line-height:2; color:rgba(255,255,255,0.75); text-transform:uppercase;
@@ -32,16 +35,37 @@ body { background:#000; overflow:hidden; font-family:'Courier New',monospace; }
 #info .lbl { color:#fff; }
 #info .desc { color:rgba(255,255,255,0.55); font-size:7.5px; padding-left:14px; margin-bottom:4px; line-height:1.6; }
 #info .connector-note { margin-top:10px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.15); color:rgba(255,255,255,0.5); font-size:7.5px; line-height:1.8; }
+
 #mute {
-  position:fixed; bottom:24px; right:24px; color:rgba(255,255,255,0.55); font-size:9px;
+  position:fixed; bottom:24px; right:16px; color:rgba(255,255,255,0.55); font-size:9px;
   letter-spacing:2px; cursor:pointer; text-transform:uppercase;
-  padding:6px 10px; border:1px solid rgba(255,255,255,0.2); transition:all .3s;
+  padding:8px 12px; border:1px solid rgba(255,255,255,0.2); transition:all .3s;
+  -webkit-tap-highlight-color:transparent;
 }
 #mute:hover { color:#fff; border-color:rgba(255,255,255,0.5); }
+
 .cluster-label {
   position:absolute; font-size:8px; letter-spacing:3px; text-transform:uppercase;
   pointer-events:none; transform:translate(-50%,-50%); opacity:0.35;
-  text-shadow: 0 0 8px currentColor;
+  text-shadow:0 0 8px currentColor;
+}
+
+/* ── Mobile overrides ── */
+@media (max-width: 768px) {
+  #info {
+    top:auto; bottom:80px; left:50%; transform:translateX(-50%);
+    font-size:13px; max-width:92vw; width:92vw;
+    padding:16px 18px; letter-spacing:1px;
+    max-height:38vh; overflow-y:auto;
+  }
+  #info h3 { font-size:12px; letter-spacing:2px; }
+  #info .desc { font-size:12px; }
+  #info .connector-note { font-size:12px; }
+  #info .dot { width:8px; height:8px; }
+  #hud { font-size:12px; letter-spacing:1.5px; bottom:auto; top:16px; left:16px; line-height:2.4; }
+  #mute { font-size:13px; bottom:auto; top:16px; right:16px; padding:10px 14px; }
+  .cluster-label { font-size:12px; }
+  .tag { font-size:13px; }
 }
 </style>
 </head>
@@ -59,6 +83,7 @@ body { background:#000; overflow:hidden; font-family:'Courier New',monospace; }
   <div class="row"><div class="dot" style="background:#22ccff"></div><span class="lbl">Geomagnetic</span></div>
   <div class="desc">Kp index from NOAA. Disturbance in Earth's magnetic field — consequence of solar wind.</div>
   <div class="connector-note">Connectors form within spheres. High solar wind bridges systems. Seismic events emit shockwave rings. Each connection fades as its event ages.</div>
+  <div class="connector-note" style="margin-top:8px;">Spheres breathe with their data — solar wind speed expands the sun sphere, quake magnitude pulses seismic, strike frequency inflates lightning, Kp index swells geomagnetic.</div>
 </div>
 <div id="hud">
   <div id="s1">SOLAR WIND &nbsp;<span>—</span></div>
@@ -71,18 +96,18 @@ body { background:#000; overflow:hidden; font-family:'Courier New',monospace; }
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 // ─── LIVE DATA STATE ─────────────────────────────────────────
-let solarTarget=0.3, solarNow=0.3, solarSpeed=415, solarDensity=5;
-let kp=2, lastQuakeTs=0, lightningSim=null, wsRetry=0;
-let seismicPulse=0;
-let lightningRate=0, lightningRateTarget=0; // strikes per second, smoothed
+let solarTarget=0.3,solarNow=0.3,solarSpeed=415,solarDensity=5;
+let kp=2,lastQuakeTs=0,lightningSim=null,wsRetry=0;
+let seismicPulse=0,lightningRate=0,lightningRateTarget=0;
+const strikeTimes=[];
 
 // ─── CLUSTERS ────────────────────────────────────────────────
 const R=18;
 const CLUSTERS={
-  1:{ x:-10, y: 18, z:  2, r:R, color:0xffe066, name:'SOLAR WIND'  },
-  2:{ x:  20, y:-18, z: -4, r:R, color:0x5588ff, name:'SEISMIC'     },
-  3:{ x:  14, y: 20, z: -8, r:R, color:0xcc88ff, name:'LIGHTNING'   },
-  4:{ x:  -8, y:-22, z:  8, r:R, color:0x22ccff, name:'GEOMAGNETIC' },
+  1:{x:-10,y:18,z:2,  r:R,color:0xffe066,name:'SOLAR WIND'},
+  2:{x:20, y:-18,z:-4,r:R,color:0x5588ff,name:'SEISMIC'},
+  3:{x:14, y:20,z:-8, r:R,color:0xcc88ff,name:'LIGHTNING'},
+  4:{x:-8, y:-22,z:8, r:R,color:0x22ccff,name:'GEOMAGNETIC'},
 };
 
 // ─── RENDERER ────────────────────────────────────────────────
@@ -96,18 +121,57 @@ scene.fog=new THREE.FogExp2(0x020509,0.005);
 const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,0.1,1000);
 const sph={th:0.5,phi:Math.PI/2.4,r:95};
 
-// ─── ORBIT ───────────────────────────────────────────────────
+// ─── INPUT — mouse + touch unified ───────────────────────────
 let dragging=false,didDrag=false,lastM={x:0,y:0},autoRot=0;
-canvas.addEventListener('mousedown',e=>{dragging=true;didDrag=false;lastM={x:e.clientX,y:e.clientY};});
-addEventListener('mouseup',()=>dragging=false);
-addEventListener('mousemove',e=>{
+let pinchDist0=0,pinchR0=0;
+
+function onDragStart(x,y){dragging=true;didDrag=false;lastM={x,y};}
+function onDragMove(x,y){
   if(!dragging)return;
-  if(Math.abs(e.clientX-lastM.x)+Math.abs(e.clientY-lastM.y)>3)didDrag=true;
-  sph.th-=(e.clientX-lastM.x)*0.004;
-  sph.phi=Math.max(0.2,Math.min(Math.PI-0.2,sph.phi+(e.clientY-lastM.y)*0.004));
-  lastM={x:e.clientX,y:e.clientY};
-});
+  if(Math.abs(x-lastM.x)+Math.abs(y-lastM.y)>4)didDrag=true;
+  sph.th-=(x-lastM.x)*0.004;
+  sph.phi=Math.max(0.2,Math.min(Math.PI-0.2,sph.phi+(y-lastM.y)*0.004));
+  lastM={x,y};
+}
+function onDragEnd(x,y){
+  if(!didDrag)onTap(x,y);
+  dragging=false;
+}
+
+// Mouse
+canvas.addEventListener('mousedown',e=>onDragStart(e.clientX,e.clientY));
+addEventListener('mouseup',e=>onDragEnd(e.clientX,e.clientY));
+addEventListener('mousemove',e=>{if(dragging)onDragMove(e.clientX,e.clientY);});
 canvas.addEventListener('wheel',e=>{sph.r=Math.max(40,Math.min(200,sph.r+e.deltaY*0.05));},{passive:true});
+
+// Touch
+canvas.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(e.touches.length===1){onDragStart(e.touches[0].clientX,e.touches[0].clientY);}
+  else if(e.touches.length===2){
+    const dx=e.touches[0].clientX-e.touches[1].clientX;
+    const dy=e.touches[0].clientY-e.touches[1].clientY;
+    pinchDist0=Math.sqrt(dx*dx+dy*dy);pinchR0=sph.r;dragging=false;
+  }
+},{passive:false});
+
+canvas.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(e.touches.length===1&&dragging){
+    onDragMove(e.touches[0].clientX,e.touches[0].clientY);
+  } else if(e.touches.length===2){
+    const dx=e.touches[0].clientX-e.touches[1].clientX;
+    const dy=e.touches[0].clientY-e.touches[1].clientY;
+    const dist=Math.sqrt(dx*dx+dy*dy);
+    sph.r=Math.max(40,Math.min(200,pinchR0*(pinchDist0/dist)));
+  }
+},{passive:false});
+
+canvas.addEventListener('touchend',e=>{
+  e.preventDefault();
+  if(e.changedTouches.length===1)onDragEnd(e.changedTouches[0].clientX,e.changedTouches[0].clientY);
+  else dragging=false;
+},{passive:false});
 
 // ─── AUDIO ───────────────────────────────────────────────────
 let actx=null,master,shimmerGain,audioReady=false;
@@ -129,10 +193,9 @@ function initAudio(){
   audioReady=true;muteBtn.textContent='♪ sound on';updateShimmer();
 }
 function updateShimmer(){if(!audioReady)return;shimmerGain.gain.setTargetAtTime(Math.min(0.04,(solarDensity/30)*0.04),actx.currentTime,2);}
-muteBtn.addEventListener('click',()=>{
-  if(!actx){initAudio();return;}
-  master.gain.value>0?(master.gain.value=0,muteBtn.textContent='♪ sound off'):(master.gain.value=0.3,muteBtn.textContent='♪ sound on');
-});
+muteBtn.addEventListener('click',()=>{if(!actx){initAudio();return;}master.gain.value>0?(master.gain.value=0,muteBtn.textContent='♪ sound off'):(master.gain.value=0.3,muteBtn.textContent='♪ sound on');});
+muteBtn.addEventListener('touchend',e=>{e.preventDefault();muteBtn.click();});
+
 function playQuake(mag,depth){
   if(!audioReady)return;depth=depth||10;
   const shallow=depth<70,deep=depth>300;
@@ -182,90 +245,61 @@ const pts=Array.from({length:N},(_,i)=>{
     lastEventType:['','solar','seismic','lightning','geomagnetic'][type],
   };
 });
-
-const pos=new Float32Array(N*3),col=new Float32Array(N*3);
-const sz=new Float32Array(N),sz2=new Float32Array(N),sz3=new Float32Array(N);
+const pos=new Float32Array(N*3),col=new Float32Array(N*3),sz=new Float32Array(N);
 pts.forEach((p,i)=>{
   pos[i*3]=p.x;pos[i*3+1]=p.y;pos[i*3+2]=p.z;
-  const c=TC[p.type];col[i*3]=c.r;col[i*3+1]=c.g;col[i*3+2]=c.b;
-  sz[i]=2+Math.random()*2; sz2[i]=sz[i]; sz3[i]=sz[i];
+  const c=TC[p.type];col[i*3]=c.r;col[i*3+1]=c.g;col[i*3+2]=c.b;sz[i]=2+Math.random()*2;
 });
-
-// Shared geometry
 const pgeo=new THREE.BufferGeometry();
 pgeo.setAttribute('position',new THREE.BufferAttribute(pos,3));
 pgeo.setAttribute('aColor',  new THREE.BufferAttribute(col,3));
 pgeo.setAttribute('size',    new THREE.BufferAttribute(sz,1));
 
-// ─── BLOOM: three particle layers ────────────────────────────
-// Each shares position+color but has its own size scale & opacity
-const VERT=`
-  attribute float size; attribute vec3 aColor; varying vec3 vC;
-  uniform float sizeScale; uniform float opacity;
-  void main(){
-    vC=aColor;
-    vec4 mv=modelViewMatrix*vec4(position,1.0);
-    gl_PointSize=size*sizeScale*(390.0/-mv.z);
-    gl_Position=projectionMatrix*mv;
-  }`;
-const FRAG=`
-  varying vec3 vC; uniform float opacity;
-  void main(){
-    float d=length(gl_PointCoord-vec2(.5));
-    if(d>.5)discard;
-    float g=pow(1.-smoothstep(0.,.5,d),1.8);
-    gl_FragColor=vec4(vC*g,g*opacity);
-  }`;
-
+const VERT=`attribute float size;attribute vec3 aColor;varying vec3 vC;uniform float sizeScale;
+  void main(){vC=aColor;vec4 mv=modelViewMatrix*vec4(position,1.0);
+  gl_PointSize=size*sizeScale*(390.0/-mv.z);gl_Position=projectionMatrix*mv;}`;
+const FRAG=`varying vec3 vC;uniform float opacity;
+  void main(){float d=length(gl_PointCoord-vec2(.5));if(d>.5)discard;
+  float g=pow(1.-smoothstep(0.,.5,d),1.8);gl_FragColor=vec4(vC*g,g*opacity);}`;
 function makeLayer(sizeScale,opacity){
-  const mat=new THREE.ShaderMaterial({
+  return new THREE.Points(pgeo,new THREE.ShaderMaterial({
     vertexShader:VERT,fragmentShader:FRAG,
     uniforms:{sizeScale:{value:sizeScale},opacity:{value:opacity}},
     transparent:true,blending:THREE.AdditiveBlending,depthWrite:false,
-  });
-  return new THREE.Points(pgeo,mat);
+  }));
 }
-scene.add(makeLayer(1.0, 1.0));   // core
-scene.add(makeLayer(2.8, 0.18));  // inner glow
-scene.add(makeLayer(6.0, 0.07));  // outer bloom halo
+scene.add(makeLayer(1.0,1.0));
+scene.add(makeLayer(2.8,0.18));
+scene.add(makeLayer(6.0,0.07));
 
-// ─── WIREFRAME SPHERES (with breathing refs) ──────────────────
+// ─── WIREFRAMES ──────────────────────────────────────────────
 const wireframes={};
 Object.entries(CLUSTERS).forEach(([type,c])=>{
   const geo=new THREE.SphereGeometry(c.r,20,14);
   const mat=new THREE.MeshBasicMaterial({color:c.color,wireframe:true,transparent:true,opacity:0.018});
-  const m=new THREE.Mesh(geo,mat);m.position.set(c.x,c.y,c.z);
-  scene.add(m);wireframes[type]=m;
+  const m=new THREE.Mesh(geo,mat);m.position.set(c.x,c.y,c.z);scene.add(m);wireframes[type]=m;
 });
 
-// ─── SHOCKWAVE RINGS ─────────────────────────────────────────
-const SHOCK_POOL=6;
+// ─── SHOCKWAVES ──────────────────────────────────────────────
 const shockwaves=[];
-for(let i=0;i<SHOCK_POOL;i++){
-  const geo=new THREE.RingGeometry(0.92,1,72);
-  const mat=new THREE.MeshBasicMaterial({
-    color:0x5588ff,transparent:true,opacity:0,
-    side:THREE.DoubleSide,blending:THREE.AdditiveBlending,depthWrite:false,
-  });
-  const mesh=new THREE.Mesh(geo,mat);
+for(let i=0;i<6;i++){
+  const mesh=new THREE.Mesh(
+    new THREE.RingGeometry(0.92,1,72),
+    new THREE.MeshBasicMaterial({color:0x5588ff,transparent:true,opacity:0,side:THREE.DoubleSide,blending:THREE.AdditiveBlending,depthWrite:false})
+  );
   mesh.visible=false;scene.add(mesh);
   shockwaves.push({mesh,active:false,age:0,maxAge:2200,cx:0,cy:0,cz:0,maxR:0});
 }
 function triggerShockwave(cx,cy,cz,color,mag){
   const sw=shockwaves.find(s=>!s.active);if(!sw)return;
   sw.cx=cx;sw.cy=cy;sw.cz=cz;sw.age=0;sw.active=true;sw.maxR=16+mag*3;
-  sw.mesh.material.color.set(color);
-  sw.mesh.position.set(cx,cy,cz);sw.mesh.scale.set(0.01,0.01,0.01);
-  sw.mesh.visible=true;
+  sw.mesh.material.color.set(color);sw.mesh.position.set(cx,cy,cz);sw.mesh.scale.set(0.01,0.01,0.01);sw.mesh.visible=true;
 }
 function tickShockwaves(){
   shockwaves.forEach(sw=>{
-    if(!sw.active)return;
-    sw.age+=16;const t=sw.age/sw.maxAge;
+    if(!sw.active)return;sw.age+=16;const t=sw.age/sw.maxAge;
     if(t>=1){sw.active=false;sw.mesh.visible=false;sw.mesh.material.opacity=0;return;}
-    const r=t*sw.maxR;
-    sw.mesh.scale.set(r,r,r);
-    sw.mesh.material.opacity=Math.sin(t*Math.PI)*0.7;
+    const r=t*sw.maxR;sw.mesh.scale.set(r,r,r);sw.mesh.material.opacity=Math.sin(t*Math.PI)*0.7;
     sw.mesh.lookAt(camera.position);
   });
 }
@@ -311,8 +345,7 @@ function tickConns(){
     ccol[k*6+3]=c.r*op;ccol[k*6+4]=c.g*op;ccol[k*6+5]=c.b*op;
   }
   for(let k=cnt;k<MAX_C;k++)for(let m=0;m<6;m++){cpos[k*6+m]=0;ccol[k*6+m]=0;}
-  cgeo.attributes.position.needsUpdate=true;cgeo.attributes.color.needsUpdate=true;
-  cgeo.setDrawRange(0,cnt*2);
+  cgeo.attributes.position.needsUpdate=true;cgeo.attributes.color.needsUpdate=true;cgeo.setDrawRange(0,cnt*2);
 }
 
 // ─── TAGS ────────────────────────────────────────────────────
@@ -333,10 +366,11 @@ function tickTags(){
     t.el.style.cssText=`left:${sx}px;top:${sy}px;opacity:${Math.min(1,age/300)*Math.min(1,(t.dur-age)/400)}`;
   }
 }
-canvas.addEventListener('click',e=>{
-  if(didDrag)return;
-  const mx=(e.clientX/innerWidth)*2-1,my=(-e.clientY/innerHeight)*2+1;
-  let best=-1,minD=0.022;
+
+// ─── TAP / CLICK ─────────────────────────────────────────────
+function onTap(cx,cy){
+  const mx=(cx/innerWidth)*2-1,my=(-cy/innerHeight)*2+1;
+  let best=-1,minD=0.03;
   pts.forEach((p,i)=>{
     _v3.set(p.x,p.y,p.z).project(camera);
     const d=Math.sqrt((mx-_v3.x)**2+(my-_v3.y)**2);
@@ -346,7 +380,8 @@ canvas.addEventListener('click',e=>{
     const p=pts[best];p.flash=0.9;p.energy=1;
     showTag(best,`${p.lastEventType.toUpperCase()}  ·  ${p.lastEvent}  ·  e:${(p.energy*100).toFixed(0)}%`,5000);
   }
-});
+}
+
 let lastFastTag=0;
 function checkFast(){
   const now=Date.now();if(now-lastFastTag<4000)return;
@@ -359,9 +394,13 @@ function checkFast(){
 
 // ─── EVENTS ──────────────────────────────────────────────────
 const C_SEIS=new THREE.Color(0x5588ff),C_LITE=new THREE.Color(0xcc88ff);
+function recordStrike(){
+  const now=Date.now();strikeTimes.push(now);
+  while(strikeTimes.length&&strikeTimes[0]<now-5000)strikeTimes.shift();
+  lightningRateTarget=strikeTimes.length/5;
+}
 function quakeEvent(mag,place,depth){
-  const sc=CLUSTERS[2];
-  seismicPulse=Math.min(1,seismicPulse+mag*.2);
+  const sc=CLUSTERS[2];seismicPulse=Math.min(1,seismicPulse+mag*.2);
   pts.forEach((p,i)=>{
     if(p.homeType!==2)return;
     const dx=p.x-sc.x,dy=p.y-sc.y,dz=p.z-sc.z,dist=Math.sqrt(dx*dx+dy*dy+dz*dz)||0.1;
@@ -374,27 +413,15 @@ function quakeEvent(mag,place,depth){
     p.lastEventType='seismic';
     if(i%3===0)addConn(i,Math.floor(Math.random()*N),C_SEIS,2500+mag*600);
   });
-  // shockwave from seismic sphere center
   triggerShockwave(sc.x,sc.y,sc.z,0x5588ff,mag);
-  // second ring slightly delayed for big quakes
   if(mag>3)setTimeout(()=>triggerShockwave(sc.x,sc.y,sc.z,0x8899ff,mag*.7),400);
   playQuake(mag,depth);
   let nearest=0,minD2=Infinity;
   pts.forEach((p,i)=>{if(p.homeType===2){const dx=p.x-sc.x,dy=p.y-sc.y,dz=p.z-sc.z,d=dx*dx+dy*dy+dz*dz;if(d<minD2){minD2=d;nearest=i;}}});
   showTag(nearest,`SEISMIC  ·  M${mag.toFixed(1)}  ·  ${depth||'?'}km  ·  ${place.slice(0,22)}`,5000);
 }
-// Rolling strike count over last 5 seconds
-const strikeTimes=[];
-function recordStrike(){
-  const now=Date.now();strikeTimes.push(now);
-  // Prune older than 5s
-  while(strikeTimes.length&&strikeTimes[0]<now-5000)strikeTimes.shift();
-  lightningRateTarget=strikeTimes.length/5; // strikes/sec
-}
-
 function lightningStrike(lat,lon){
-  recordStrike();
-  let hits=0;
+  recordStrike();let hits=0;
   for(let i=0;i<N&&hits<12;i++){
     const p=pts[i];if(p.homeType!==3)continue;
     p.flash=0.6+Math.random()*.4;p.energy=Math.min(1,p.energy+0.5);
@@ -411,8 +438,7 @@ async function fetchSolar(){
     const r=await fetch('https://services.swpc.noaa.gov/products/solar-wind/plasma-7-day.json');
     const d=await r.json();
     if(d&&d.length>2){
-      const row=d[d.length-1];
-      solarSpeed=parseFloat(row[2])||415;solarDensity=parseFloat(row[1])||5;
+      const row=d[d.length-1];solarSpeed=parseFloat(row[2])||415;solarDensity=parseFloat(row[1])||5;
       solarTarget=Math.min(1,Math.max(0,(solarSpeed-250)/550));
       document.getElementById('s1').innerHTML=`SOLAR WIND &nbsp;<span>${Math.round(solarSpeed)} km/s · ${solarDensity.toFixed(1)} p/cm³</span>`;
       pts.forEach(p=>{if(p.lastEventType==='solar')p.lastEvent=`${Math.round(solarSpeed)} km/s`;});
@@ -450,14 +476,7 @@ async function fetchKp(){
       kp=parseFloat(d[d.length-1].kp_index)||2;
       document.getElementById('s4').innerHTML=`GEOMAGNETIC &nbsp;<span>Kp ${kp.toFixed(1)}</span>`;
       pts.forEach(p=>{if(p.lastEventType==='geomagnetic')p.lastEvent=`Kp ${kp.toFixed(1)}`;});
-      if(kp>4){
-        pts.forEach(p=>{
-          if(p.homeType!==4)return;
-          const boost=((kp-4)/5)*0.12;
-          p.vx+=(Math.random()-.5)*boost;p.vy+=(Math.random()-.5)*boost;p.vz+=(Math.random()-.5)*boost;
-          p.energy=Math.min(1,p.energy+boost*.5);
-        });
-      }
+      if(kp>4){pts.forEach(p=>{if(p.homeType!==4)return;const boost=((kp-4)/5)*0.12;p.vx+=(Math.random()-.5)*boost;p.vy+=(Math.random()-.5)*boost;p.vz+=(Math.random()-.5)*boost;p.energy=Math.min(1,p.energy+boost*.5);});}
     }
   }catch{document.getElementById('s4').innerHTML=`GEOMAGNETIC &nbsp;<span>—</span>`;}
   setTimeout(fetchKp,180000);
@@ -477,74 +496,46 @@ function startLightningSim(){
 }
 
 // ─── MAIN LOOP ───────────────────────────────────────────────
-const clock=new THREE.Clock();
-let t_global=0;
+const clock=new THREE.Clock();let t_global=0;
 function loop(){
-  requestAnimationFrame(loop);clock.getDelta();
-  t_global+=0.016;
+  requestAnimationFrame(loop);clock.getDelta();t_global+=0.016;
   if(!dragging)autoRot+=.00022;
   const th=sph.th+autoRot;
   camera.position.set(sph.r*Math.sin(sph.phi)*Math.sin(th),sph.r*Math.cos(sph.phi),sph.r*Math.sin(sph.phi)*Math.cos(th));
   camera.lookAt(0,0,0);
-  solarNow+=(solarTarget-solarNow)*.008;
-  seismicPulse*=0.985;
-
-  // ── Sphere breathing ──────────────────────────────────────
-  // 1: Solar — breathes with wind speed, slow sine
-  const solarBreath=1+solarNow*0.08+Math.sin(t_global*0.4)*solarNow*0.03;
-  wireframes[1].scale.setScalar(solarBreath);
-  // 2: Seismic — pulses on quake then returns
-  const seisBreath=1+seismicPulse*0.12;
-  wireframes[2].scale.setScalar(seisBreath);
-  // 3: Lightning — expands with strike rate, slow decay between bursts
+  solarNow+=(solarTarget-solarNow)*.008;seismicPulse*=0.985;
   lightningRate+=(lightningRateTarget-lightningRate)*.04;
-  const liteBreath=1+Math.min(lightningRate/8,1)*0.09+Math.sin(t_global*0.6)*0.012;
-  wireframes[3].scale.setScalar(liteBreath);
-  // 4: Geomagnetic — slow drift with kp
-  const geoBreath=1+(kp/9)*0.07+Math.sin(t_global*0.25)*0.02;
-  wireframes[4].scale.setScalar(geoBreath);
+
+  // Sphere breathing
+  wireframes[1].scale.setScalar(1+solarNow*0.08+Math.sin(t_global*0.4)*solarNow*0.03);
+  wireframes[2].scale.setScalar(1+seismicPulse*0.12);
+  wireframes[3].scale.setScalar(1+Math.min(lightningRate/8,1)*0.09+Math.sin(t_global*0.6)*0.012);
+  wireframes[4].scale.setScalar(1+(kp/9)*0.07+Math.sin(t_global*0.25)*0.02);
 
   pts.forEach((p,i)=>{
     p.age+=0.016;
-    const hc=CLUSTERS[p.homeType];
-    const wfScale=wireframes[p.homeType].scale.x;
-    const effectiveR=hc.r*wfScale;
-
-    // Shell-seeking spring toward breathing radius
+    const hc=CLUSTERS[p.homeType],wfScale=wireframes[p.homeType].scale.x,effectiveR=hc.r*wfScale;
     const dx=p.x-hc.x,dy=p.y-hc.y,dz=p.z-hc.z;
     const dist=Math.sqrt(dx*dx+dy*dy+dz*dz)||0.001;
-    const nx=dx/dist,ny=dy/dist,nz=dz/dist;
-    const delta=dist-effectiveR;
-    const sf=0.007;
-    p.vx-=nx*delta*sf;p.vy-=ny*delta*sf;p.vz-=nz*delta*sf;
-
-    // Tangential noise — keeps particles circulating on surface, no pole drift
+    const nx=dx/dist,ny=dy/dist,nz=dz/dist,delta=dist-effectiveR;
+    p.vx-=nx*delta*0.007;p.vy-=ny*delta*0.007;p.vz-=nz*delta*0.007;
     const tx=Math.random()-.5,ty=Math.random()-.5,tz=Math.random()-.5;
-    const tdot=tx*nx+ty*ny+tz*nz;
-    const tstr=0.004+(p.homeType===1?solarNow*.004:0);
+    const tdot=tx*nx+ty*ny+tz*nz,tstr=0.004+(p.homeType===1?solarNow*.004:0);
     p.vx+=(tx-nx*tdot)*tstr;p.vy+=(ty-ny*tdot)*tstr;p.vz+=(tz-nz*tdot)*tstr;
-
     if(p.homeType===1){p.vx+=(Math.random()-.5)*solarNow*.006;p.vy+=(Math.random()-.5)*solarNow*.004;}
-
     p.vx*=0.974;p.vy*=0.974;p.vz*=0.974;
     p.x+=p.vx;p.y+=p.vy;p.z+=p.vz;
     p.speed=Math.sqrt(p.vx*p.vx+p.vy*p.vy+p.vz*p.vz);
     p.flash*=.82;p.energy+=(p.base-p.energy)*.004;
-
     pos[i*3]=p.x;pos[i*3+1]=p.y;pos[i*3+2]=p.z;
-    const tc=TC[p.type]||TC[1];
-    let r,g,b;
+    const tc=TC[p.type]||TC[1];let r,g,b;
     if(p.flash>.08){const f=p.flash;r=tc.r+(1-tc.r)*f;g=tc.g+(1-tc.g)*f;b=tc.b+(1-tc.b)*f;}
     else{const e=.55+p.energy*.45;r=tc.r*e;g=tc.g*e;b=tc.b*e;}
     col[i*3]=r;col[i*3+1]=g;col[i*3+2]=b;
     sz[i]=(2.0+p.energy*3.0+p.flash*6)*(p.speed>.1?1.5:1);
   });
+  pgeo.attributes.position.needsUpdate=true;pgeo.attributes.aColor.needsUpdate=true;pgeo.attributes.size.needsUpdate=true;
 
-  pgeo.attributes.position.needsUpdate=true;
-  pgeo.attributes.aColor.needsUpdate=true;
-  pgeo.attributes.size.needsUpdate=true;
-
-  // Intra-cluster connections
   if(Math.random()<.12){
     const a=Math.floor(Math.random()*N),pa=pts[a],hc=CLUSTERS[pa.homeType];
     for(let b=a+1;b<N;b++){
@@ -553,19 +544,15 @@ function loop(){
       if(d<hc.r*1.5){_tc2.copy(TC[pa.type]||TC[1]).multiplyScalar(.45+solarNow*.4);addConn(a,b,_tc2,1200+solarNow*1800);break;}
     }
   }
-  // Inter-cluster filaments — solar wind bridges
   if(solarNow>0.5&&Math.random()<solarNow*.03){
     const a=Math.floor(Math.random()*N),b=Math.floor(Math.random()*N);
     if(a!==b&&pts[a].homeType!==pts[b].homeType){_tc2.copy(TC[1]).multiplyScalar(.22);addConn(a,b,_tc2,700+solarNow*1000);}
   }
-
   tickConns();tickTags();tickClusterLabels();tickShockwaves();checkFast();
   renderer.render(scene,camera);
 }
 
-// ─── BOOT ────────────────────────────────────────────────────
-fetchSolar();fetchSeismic();fetchKp();connectLightning();
-loop();
+fetchSolar();fetchSeismic();fetchKp();connectLightning();loop();
 addEventListener('resize',()=>{renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();});
 </script>
 </body>
