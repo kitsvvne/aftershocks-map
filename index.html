@@ -33,6 +33,7 @@ body { background:#000; overflow:hidden; font-family:'Courier New',monospace; to
 #info .lbl { color:#fff; }
 #info .desc { color:rgba(255,255,255,0.55); font-size:7.5px; padding-left:14px; margin-bottom:4px; line-height:1.6; }
 #info .connector-note { margin-top:10px; padding-top:8px; border-top:1px solid rgba(255,255,255,0.15); color:rgba(255,255,255,0.5); font-size:7.5px; line-height:1.8; }
+#info .connector-note + .connector-note { margin-top:8px; }
 #mute {
   position:fixed; bottom:24px; right:16px; color:rgba(255,255,255,0.55); font-size:9px;
   letter-spacing:2px; cursor:pointer; text-transform:uppercase;
@@ -71,7 +72,7 @@ body { background:#000; overflow:hidden; font-family:'Courier New',monospace; to
   <div class="row"><div class="dot" style="background:#22ccff"></div><span class="lbl">Geomagnetic</span></div>
   <div class="desc">Kp index from NOAA. Disturbance in Earth's magnetic field — consequence of solar wind.</div>
   <div class="connector-note">Connectors carry meaning. White links events from different systems within 10 seconds — temporal coincidence. Violet links solar to geomagnetic when both are elevated — a live causal chain. Sphere-colored links connect particles hit by the same event.</div>
-  <div class="connector-note" style="margin-top:8px;">Spheres breathe with their data — solar wind speed, quake magnitude, strike frequency, Kp index.</div>
+  <div class="connector-note">Spheres breathe with their data — solar wind speed, quake magnitude, strike frequency, Kp index.</div>
 </div>
 <div id="hud">
   <div id="s1">SOLAR WIND &nbsp;<span>—</span></div>
@@ -95,6 +96,7 @@ const strikeTimes=[];
 let lastQuakeTime=0,lastLightningTime=0;
 const COINCIDENCE_WINDOW=10000;
 let eventId=0;
+let firstSeismicFetch=true;
 
 // ─── CLUSTERS ────────────────────────────────────────────────
 const R=23;
@@ -237,7 +239,6 @@ function playLightning(lat){
     og.gain.setValueAtTime(0.08,actx.currentTime);
     og.gain.exponentialRampToValueAtTime(0.001,actx.currentTime+0.06);
     o.connect(og);og.connect(master);o.start();o.stop(actx.currentTime+0.07);
-    // FIX: Math.floor ensures integer sample count — createBuffer requires integer
     const buf=actx.createBuffer(1,Math.floor(actx.sampleRate*0.12),actx.sampleRate),d=buf.getChannelData(0);
     for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,2.2);
     const src=actx.createBufferSource(),ng=actx.createGain(),nf=actx.createBiquadFilter();
@@ -248,6 +249,10 @@ function playLightning(lat){
 
 // ─── PARTICLES ───────────────────────────────────────────────
 const TC={1:new THREE.Color(0xffe066),2:new THREE.Color(0x5588ff),3:new THREE.Color(0xcc88ff),4:new THREE.Color(0x22ccff)};
+
+// Build index of particles by type for random selection
+const ptsByType={1:[],2:[],3:[],4:[]};
+
 const pts=Array.from({length:N},(_,i)=>{
   const type=(i%4)+1,c=CLUSTERS[type];
   const th=Math.random()*Math.PI*2,ph=Math.acos(2*Math.random()-1);
@@ -259,11 +264,26 @@ const pts=Array.from({length:N},(_,i)=>{
     x:c.x+px,y:c.y+py,z:c.z+pz,
     vx:speed*Math.sin(vph)*Math.cos(vth),vy:speed*Math.sin(vph)*Math.sin(vth),vz:speed*Math.cos(vph),
     type,homeType:type,energy:0.3+Math.random()*.4,base:0.2+Math.random()*.3,
-    flash:0,age:Math.random()*100,speed:0,eventId:0,
+    flash:0,age:Math.random()*100,speed:0,eventId:0,idx:i,
     lastEvent:['','415 km/s','monitoring','live feed','Kp 2'][type],
     lastEventType:['','solar','seismic','lightning','geomagnetic'][type],
   };
 });
+
+// Populate type index
+pts.forEach((p,i)=>{ptsByType[p.homeType].push(i);});
+
+// Fisher-Yates pick-k helper: returns k random indices from arr without repeats
+function pickRandom(arr,k){
+  const n=arr.length;if(k>=n)return arr.slice();
+  const copy=arr.slice();
+  for(let i=0;i<k;i++){
+    const j=i+Math.floor(Math.random()*(n-i));
+    [copy[i],copy[j]]=[copy[j],copy[i]];
+  }
+  return copy.slice(0,k);
+}
+
 const pos=new Float32Array(N*3),col=new Float32Array(N*3),sz=new Float32Array(N);
 pts.forEach((p,i)=>{
   pos[i*3]=p.x;pos[i*3+1]=p.y;pos[i*3+2]=p.z;
@@ -463,18 +483,20 @@ function quakeEvent(mag,place,depth){
 function lightningStrike(lat,lon){
   recordStrike();
   const eid=++eventId;
-  const affected=[];let hits=0;
-  for(let i=0;i<N&&hits<8;i++){
-    const p=pts[i];if(p.homeType!==3)continue;
+  const affected=[];
+  // Pick 8 random lightning particles instead of always the first 8
+  const picks=pickRandom(ptsByType[3],8);
+  for(const i of picks){
+    const p=pts[i];
     p.flash=0.6+Math.random()*.4;p.energy=Math.min(1,p.energy+0.5);
     p.vx+=(Math.random()-.5)*.5;p.vy+=(Math.random()-.5)*.5;p.vz+=(Math.random()-.5)*.5;
     p.lastEvent=`${lat.toFixed(1)}° ${lon.toFixed(1)}°`;p.lastEventType='lightning';
-    p.eventId=eid;affected.push(i);hits++;
+    p.eventId=eid;affected.push(i);
   }
   for(let k=0;k<3&&affected.length>=2;k++){
     const a=affected[Math.floor(Math.random()*affected.length)];
     const b=affected[Math.floor(Math.random()*affected.length)];
-    if(a!==b)addConn(a,b,C_LITE,600);
+    if(a!==b)addConn(a,b,C_LITE,1800);
   }
   const now=Date.now();lastLightningTime=now;
   if(now-lastQuakeTime<COINCIDENCE_WINDOW&&affected.length){
@@ -545,14 +567,28 @@ async function fetchSeismic(){
         p.lastEventType='seismic';
         p.base=0.1+Math.min(mag/7,1)*0.35;p.energy=p.base+Math.random()*0.1;
       });
-      d.features.forEach(f=>{
-        if(f.properties.time>lastQuakeTs){
-          const depth=f.geometry&&f.geometry.coordinates?Math.round(f.geometry.coordinates[2]):null;
-          quakeEvent(f.properties.mag||1,f.properties.place||'unknown',depth);
-          lastQuakeTs=Math.max(lastQuakeTs,f.properties.time);
-        }
-      });
-      if(lastQuakeTs===0)lastQuakeTs=d.features[0].properties.time;
+
+      // On first fetch, fire only the 3 most recent quakes (not the full hour burst)
+      if(firstSeismicFetch){
+        const recent=d.features.slice(0,3);
+        recent.forEach((f,idx)=>{
+          setTimeout(()=>{
+            const depth=f.geometry&&f.geometry.coordinates?Math.round(f.geometry.coordinates[2]):null;
+            quakeEvent(f.properties.mag||1,f.properties.place||'unknown',depth);
+          },idx*800);
+        });
+        lastQuakeTs=d.features[0].properties.time;
+        firstSeismicFetch=false;
+      }else{
+        d.features.forEach(f=>{
+          if(f.properties.time>lastQuakeTs){
+            const depth=f.geometry&&f.geometry.coordinates?Math.round(f.geometry.coordinates[2]):null;
+            quakeEvent(f.properties.mag||1,f.properties.place||'unknown',depth);
+            lastQuakeTs=Math.max(lastQuakeTs,f.properties.time);
+          }
+        });
+      }
+
       document.getElementById('s2').innerHTML=`SEISMIC &nbsp;<span>${d.features.length}/hr</span>`;
     }
   }catch(e){
@@ -629,14 +665,24 @@ function connectLightning(){
   try{
     const ws=new WebSocket(`wss://ws${(wsRetry%9)+1}.blitzortung.org/`);
     const timeout=setTimeout(()=>{try{ws.close();}catch(e){}},8000);
+    let gotMessage=false,dataTimeout=null;
     ws.onopen=()=>{
       clearTimeout(timeout);
       ws.send(JSON.stringify({west:-180,east:180,north:90,south:-90}));
-      document.getElementById('s3').innerHTML=`LIGHTNING &nbsp;<span>live feed</span>`;
-      clearInterval(lightningSim);lightningSim=null;
+      // Give it 4s to actually deliver data — if nothing arrives, fall back
+      dataTimeout=setTimeout(()=>{
+        if(!gotMessage){try{ws.close();}catch(e){}}
+      },4000);
     };
-    ws.onmessage=e=>{try{const d=JSON.parse(e.data);if(d.lat&&d.lon)lightningStrike(d.lat,d.lon);}catch(e){}};
-    ws.onerror=ws.onclose=()=>{clearTimeout(timeout);startLightningSim();wsRetry++;setTimeout(connectLightning,20000);};
+    ws.onmessage=e=>{
+      if(!gotMessage){
+        gotMessage=true;clearTimeout(dataTimeout);
+        document.getElementById('s3').innerHTML=`LIGHTNING &nbsp;<span>live feed</span>`;
+        clearInterval(lightningSim);lightningSim=null;
+      }
+      try{const d=JSON.parse(e.data);if(d.lat&&d.lon)lightningStrike(d.lat,d.lon);}catch(e){}
+    };
+    ws.onerror=ws.onclose=()=>{clearTimeout(timeout);clearTimeout(dataTimeout);startLightningSim();wsRetry++;setTimeout(connectLightning,20000);};
   }catch(e){}
 }
 
@@ -660,11 +706,7 @@ function loop(ts){
   solarNow+=(solarTarget-solarNow)*.008;seismicPulse*=0.985;
   lightningRate+=(lightningRateTarget-lightningRate)*.04;
 
-  // ─── SPHERE BREATHING ────────────────────────────────────
-  // Each sphere has a baseline idle pulse (always visible) plus a data-driven component.
-  // FIX: previously sine was multiplied *by* solarNow (invisible at baseline),
-  //      seismic had no sine at all, and amplitudes were too small to see (~0.01-0.02).
-  //      Now each sphere has an unconditional ±0.05 idle breath plus larger data response.
+  // Sphere breathing: unconditional idle pulse + data-driven amplitude
   const s1 = 1 + solarNow*0.14 + Math.sin(t_global*0.42)*0.05;
   const s2 = 1 + seismicPulse*0.20 + Math.sin(t_global*0.36)*0.05;
   const s3 = 1 + Math.min(lightningRate/4,1)*0.14 + Math.sin(t_global*0.58)*0.05;
