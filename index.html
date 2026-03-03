@@ -504,12 +504,38 @@ async function fetchSolar(){
     const r=await fetch('https://services.swpc.noaa.gov/products/solar-wind/plasma-7-day.json');
     const d=await r.json();
     if(d&&d.length>2){
-      const row=d[d.length-1];
-      solarSpeed=parseFloat(row[2])||415;solarDensity=parseFloat(row[1])||5;
+      // Drop header row, keep data
+      const rows=d.slice(1).filter(r=>parseFloat(r[2])>0);
+      const latest=rows[rows.length-1];
+      solarSpeed=parseFloat(latest[2])||415;
+      solarDensity=parseFloat(latest[1])||5;
       solarTarget=Math.min(1,Math.max(0,(solarSpeed-250)/550));
       document.getElementById('s1').innerHTML=`SOLAR WIND &nbsp;<span>${Math.round(solarSpeed)} km/s · ${solarDensity.toFixed(1)} p/cm³</span>`;
-      pts.forEach(p=>{if(p.lastEventType==='solar')p.lastEvent=`${Math.round(solarSpeed)} km/s`;});
       updateShimmer();
+
+      // Assign each solar particle a distinct historical reading
+      const solarPts=pts.filter(p=>p.homeType===1);
+      const total=solarPts.length;
+      solarPts.forEach((p,idx)=>{
+        // Spread evenly across history — newest particles get most recent readings
+        const rowIdx=Math.floor((idx/total)*rows.length);
+        const row=rows[Math.min(rowIdx,rows.length-1)];
+        const spd=parseFloat(row[2])||415;
+        const dens=parseFloat(row[1])||5;
+        const ts=new Date(row[0]);
+        const hoursAgo=Math.round((Date.now()-ts.getTime())/3600000);
+        const timeLabel=hoursAgo<1?'< 1 hr ago':hoursAgo===1?'1 hr ago':`${hoursAgo} hrs ago`;
+
+        p.lastEvent=`${Math.round(spd)} km/s · ${timeLabel}`;
+        p.lastEventType='solar';
+        p.solarSpeed=spd;
+        p.solarAge=hoursAgo; // 0=newest, ~168=oldest (7 days)
+
+        // Older particles are dimmer and sit slightly deeper in the sphere
+        const ageFactor=1-(hoursAgo/170);
+        p.base=0.1+ageFactor*0.35;
+        p.energy=p.base+Math.random()*0.1;
+      });
     }
   }catch(e){document.getElementById('s1').innerHTML=`SOLAR WIND &nbsp;<span>—</span>`;}
   setTimeout(fetchSolar,60000);
@@ -602,7 +628,10 @@ function loop(ts){
 
   pts.forEach((p,i)=>{
     p.age+=delta;
-    const hc=CLUSTERS[p.homeType],effectiveR=hc.r*wireframes[p.homeType].scale.x;
+    const hc=CLUSTERS[p.homeType];
+    // Solar particles: older readings sit slightly inside the shell
+    const agePull=(p.homeType===1&&p.solarAge)?Math.min(p.solarAge/170,1)*0.18:0;
+    const effectiveR=(hc.r*wireframes[p.homeType].scale.x)*(1-agePull);
     const dx=p.x-hc.x,dy=p.y-hc.y,dz=p.z-hc.z;
     const dist=Math.sqrt(dx*dx+dy*dy+dz*dz)||0.001;
     const nx=dx/dist,ny=dy/dist,nz=dz/dist,delta2=dist-effectiveR;
