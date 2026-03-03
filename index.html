@@ -82,7 +82,7 @@ body { background:#000; overflow:hidden; font-family:'Courier New',monospace; to
   <div class="desc">Global strikes via Blitzortung. Latitude maps to pitch — equatorial low, polar high.</div>
   <div class="row"><div class="dot" style="background:#22ccff"></div><span class="lbl">Geomagnetic</span></div>
   <div class="desc">Kp index from NOAA. Disturbance in Earth's magnetic field — consequence of solar wind.</div>
-  <div class="connector-note">Connectors form within spheres. High solar wind bridges systems. Seismic events emit shockwave rings. Each connection fades as its event ages.</div>
+  <div class="connector-note">Connectors carry meaning. White links two events from different systems that occurred within 10 seconds of each other — temporal coincidence. Violet links solar wind to geomagnetic particles when both are elevated — a live causal chain. Sphere-colored links connect particles hit by the same event: the same quake, the same lightning burst.</div>
   <div class="connector-note" style="margin-top:8px;">Spheres breathe with their data — solar wind speed expands the sun sphere, quake magnitude pulses seismic, strike frequency inflates lightning, Kp index swells geomagnetic.</div>
 </div>
 <div id="hud">
@@ -101,7 +101,9 @@ let kp=2,lastQuakeTs=0,lightningSim=null,wsRetry=0;
 let seismicPulse=0,lightningRate=0,lightningRateTarget=0;
 const strikeTimes=[];
 
-// ─── CLUSTERS ────────────────────────────────────────────────
+// Timestamps of recent cross-system events for coincidence detection
+let lastQuakeTime=0, lastLightningTime=0;
+const COINCIDENCE_WINDOW=10000; // 10 seconds
 const R=18;
 const CLUSTERS={
   1:{x:-10,y:18,z:2,  r:R,color:0xffe066,name:'SOLAR WIND'},
@@ -110,7 +112,7 @@ const CLUSTERS={
   4:{x:-8, y:-22,z:8, r:R,color:0x22ccff,name:'GEOMAGNETIC'},
 };
 
-// ─── RENDERER ────────────────────────────────────────────────
+// ─── CLUSTERS ────────────────────────────────────────────────
 const canvas=document.getElementById('c');
 const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
 renderer.setSize(innerWidth,innerHeight);
@@ -121,7 +123,7 @@ scene.fog=new THREE.FogExp2(0x020509,0.005);
 const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,0.1,1000);
 const sph={th:0.5,phi:Math.PI/2.4,r:95};
 
-// ─── INPUT — mouse + touch unified ───────────────────────────
+// ─── RENDERER ────────────────────────────────────────────────
 let dragging=false,didDrag=false,lastM={x:0,y:0},autoRot=0;
 let pinchDist0=0,pinchR0=0;
 
@@ -393,14 +395,23 @@ function checkFast(){
 }
 
 // ─── EVENTS ──────────────────────────────────────────────────
-const C_SEIS=new THREE.Color(0x5588ff),C_LITE=new THREE.Color(0xcc88ff);
 function recordStrike(){
   const now=Date.now();strikeTimes.push(now);
   while(strikeTimes.length&&strikeTimes[0]<now-5000)strikeTimes.shift();
   lightningRateTarget=strikeTimes.length/5;
 }
+
+const C_SEIS=new THREE.Color(0x5588ff),C_LITE=new THREE.Color(0xcc88ff);
+const C_SOLAR=new THREE.Color(0xffe066),C_GEO=new THREE.Color(0x22ccff);
+const C_COINCIDENCE=new THREE.Color(0xffffff); // white — cross-system temporal link
+const C_CAUSAL=new THREE.Color(0xaa66ff);      // violet — solar→geo causal chain
+
+let eventId=0; // increments per event so same-event particles can find each other
+
 function quakeEvent(mag,place,depth){
   const sc=CLUSTERS[2];seismicPulse=Math.min(1,seismicPulse+mag*.2);
+  const eid=++eventId;
+  const affected=[];
   pts.forEach((p,i)=>{
     if(p.homeType!==2)return;
     const dx=p.x-sc.x,dy=p.y-sc.y,dz=p.z-sc.z,dist=Math.sqrt(dx*dx+dy*dy+dz*dz)||0.1;
@@ -410,9 +421,29 @@ function quakeEvent(mag,place,depth){
     p.vz+=(dz/dist)*f+(Math.random()-.5)*mag*.04;
     p.energy=Math.min(1,p.energy+f);
     p.lastEvent=`M${mag.toFixed(1)} ${depth?depth+'km':''} — ${place.slice(0,22)}`;
-    p.lastEventType='seismic';
-    if(i%3===0)addConn(i,Math.floor(Math.random()*N),C_SEIS,2500+mag*600);
+    p.lastEventType='seismic'; p.eventId=eid;
+    affected.push(i);
   });
+  // Event cohesion — connect particles shaken by the same quake
+  for(let a=0;a<affected.length;a++){
+    for(let b=a+1;b<affected.length;b++){
+      if(Math.random()<0.12) addConn(affected[a],affected[b],C_SEIS,2500+mag*600);
+    }
+  }
+
+  // Temporal coincidence — did lightning just happen?
+  const now=Date.now();
+  lastQuakeTime=now;
+  if(now-lastLightningTime<COINCIDENCE_WINDOW){
+    // Connect a seismic particle to a lightning particle — temporal coincidence
+    const sp=affected[Math.floor(Math.random()*affected.length)];
+    const lp=pts.findIndex(p=>p.homeType===3);
+    if(sp!==undefined&&lp!==-1){
+      addConn(sp,lp,C_COINCIDENCE,4000);
+      showTag(sp,`COINCIDENCE  ·  quake + lightning within ${((now-lastLightningTime)/1000).toFixed(0)}s`,4000);
+    }
+  }
+
   triggerShockwave(sc.x,sc.y,sc.z,0x5588ff,mag);
   if(mag>3)setTimeout(()=>triggerShockwave(sc.x,sc.y,sc.z,0x8899ff,mag*.7),400);
   playQuake(mag,depth);
@@ -420,16 +451,57 @@ function quakeEvent(mag,place,depth){
   pts.forEach((p,i)=>{if(p.homeType===2){const dx=p.x-sc.x,dy=p.y-sc.y,dz=p.z-sc.z,d=dx*dx+dy*dy+dz*dz;if(d<minD2){minD2=d;nearest=i;}}});
   showTag(nearest,`SEISMIC  ·  M${mag.toFixed(1)}  ·  ${depth||'?'}km  ·  ${place.slice(0,22)}`,5000);
 }
+
 function lightningStrike(lat,lon){
-  recordStrike();let hits=0;
+  recordStrike();
+  const eid=++eventId;
+  const affected=[];
+  let hits=0;
   for(let i=0;i<N&&hits<12;i++){
     const p=pts[i];if(p.homeType!==3)continue;
     p.flash=0.6+Math.random()*.4;p.energy=Math.min(1,p.energy+0.5);
     p.vx+=(Math.random()-.5)*.5;p.vy+=(Math.random()-.5)*.5;p.vz+=(Math.random()-.5)*.5;
     p.lastEvent=`${lat.toFixed(1)}° ${lon.toFixed(1)}°`;p.lastEventType='lightning';
-    if(hits<5)addConn(i,Math.floor(Math.random()*N),C_LITE,600);hits++;
+    p.eventId=eid; affected.push(i); hits++;
+  }
+  // Event cohesion — connect particles lit by same strike burst
+  for(let a=0;a<affected.length;a++){
+    for(let b=a+1;b<affected.length;b++){
+      if(Math.random()<0.2) addConn(affected[a],affected[b],C_LITE,600);
+    }
+  }
+
+  // Temporal coincidence — did a quake just happen?
+  const now=Date.now();
+  lastLightningTime=now;
+  if(now-lastQuakeTime<COINCIDENCE_WINDOW){
+    const lp=affected[Math.floor(Math.random()*affected.length)];
+    const sp=pts.findIndex(p=>p.homeType===2);
+    if(lp!==undefined&&sp!==-1){
+      addConn(lp,sp,C_COINCIDENCE,4000);
+    }
   }
   playLightning(lat);
+}
+
+// Causal chain — called in loop when solar+geo both elevated
+let lastCausalConn=0;
+function tickCausalConnections(){
+  const now=Date.now();
+  if(now-lastCausalConn<3000)return; // throttle
+  if(solarNow>0.55&&kp>3){
+    // Pick a random solar and geomagnetic particle — connect them
+    const solar=pts.filter(p=>p.homeType===1);
+    const geo=pts.filter((_,i)=>pts[i].homeType===4);
+    if(solar.length&&geo.length){
+      const si=pts.indexOf(solar[Math.floor(Math.random()*solar.length)]);
+      const gi=pts.indexOf(pts.find(p=>p.homeType===4));
+      if(si!==-1&&gi!==-1){
+        addConn(si,gi,C_CAUSAL,2000+solarNow*2000);
+        lastCausalConn=now;
+      }
+    }
+  }
 }
 
 // ─── LIVE DATA ────────────────────────────────────────────────
@@ -482,12 +554,24 @@ async function fetchKp(){
   setTimeout(fetchKp,180000);
 }
 function connectLightning(){
+  // Always start simulation immediately so mobile never shows blank
+  startLightningSim();
   try{
     const ws=new WebSocket(`wss://ws${(wsRetry%9)+1}.blitzortung.org/`);
-    ws.onopen=()=>{ws.send(JSON.stringify({west:-180,east:180,north:90,south:-90}));document.getElementById('s3').innerHTML=`LIGHTNING &nbsp;<span>live feed</span>`;clearInterval(lightningSim);lightningSim=null;};
+    const timeout=setTimeout(()=>ws.close(),8000); // give up after 8s
+    ws.onopen=()=>{
+      clearTimeout(timeout);
+      ws.send(JSON.stringify({west:-180,east:180,north:90,south:-90}));
+      document.getElementById('s3').innerHTML=`LIGHTNING &nbsp;<span>live feed</span>`;
+      clearInterval(lightningSim);lightningSim=null;
+    };
     ws.onmessage=e=>{try{const d=JSON.parse(e.data);if(d.lat&&d.lon)lightningStrike(d.lat,d.lon);}catch{}};
-    ws.onerror=ws.onclose=()=>{startLightningSim();wsRetry++;setTimeout(connectLightning,12000);};
-  }catch{startLightningSim();}
+    ws.onerror=ws.onclose=()=>{
+      clearTimeout(timeout);
+      startLightningSim(); // ensure sim is running
+      wsRetry++;setTimeout(connectLightning,20000);
+    };
+  }catch{ /* sim already running */ }
 }
 function startLightningSim(){
   if(lightningSim)return;
@@ -536,18 +620,9 @@ function loop(){
   });
   pgeo.attributes.position.needsUpdate=true;pgeo.attributes.aColor.needsUpdate=true;pgeo.attributes.size.needsUpdate=true;
 
-  if(Math.random()<.12){
-    const a=Math.floor(Math.random()*N),pa=pts[a],hc=CLUSTERS[pa.homeType];
-    for(let b=a+1;b<N;b++){
-      const pb=pts[b];if(pb.homeType!==pa.homeType)continue;
-      const d=Math.sqrt((pa.x-pb.x)**2+(pa.y-pb.y)**2+(pa.z-pb.z)**2);
-      if(d<hc.r*1.5){_tc2.copy(TC[pa.type]||TC[1]).multiplyScalar(.45+solarNow*.4);addConn(a,b,_tc2,1200+solarNow*1800);break;}
-    }
-  }
-  if(solarNow>0.5&&Math.random()<solarNow*.03){
-    const a=Math.floor(Math.random()*N),b=Math.floor(Math.random()*N);
-    if(a!==b&&pts[a].homeType!==pts[b].homeType){_tc2.copy(TC[1]).multiplyScalar(.22);addConn(a,b,_tc2,700+solarNow*1000);}
-  }
+  // Causal chain — solar wind driving geomagnetic disturbance
+  tickCausalConnections();
+
   tickConns();tickTags();tickClusterLabels();tickShockwaves();checkFast();
   renderer.render(scene,camera);
 }
