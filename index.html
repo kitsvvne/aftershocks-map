@@ -424,12 +424,14 @@ function quakeEvent(mag,place,depth){
   pts.forEach((p,i)=>{
     if(p.homeType!==2)return;
     const dx=p.x-sc.x,dy=p.y-sc.y,dz=p.z-sc.z,dist=Math.sqrt(dx*dx+dy*dy+dz*dz)||0.1;
+    if(dist>sc.r*1.2)return; // only affect particles within blast radius
     const f=mag*.15;
     p.vx+=(dx/dist)*f+(Math.random()-.5)*mag*.04;
     p.vy+=(dy/dist)*f+(Math.random()-.5)*mag*.04;
     p.vz+=(dz/dist)*f+(Math.random()-.5)*mag*.04;
     p.energy=Math.min(1,p.energy+f);
-    p.lastEvent=`M${mag.toFixed(1)} ${depth?depth+'km':''} — ${place.slice(0,22)}`;
+    const minsAgo=0;
+    p.lastEvent=`M${mag.toFixed(1)} ${depth?depth+'km':''} — ${place.slice(0,22)} · just now`;
     p.lastEventType='seismic';p.eventId=eid;
     affected.push(i);
   });
@@ -545,7 +547,25 @@ async function fetchSeismic(){
   try{
     const r=await fetch('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/1.0_hour.geojson');
     const d=await r.json();
-    if(d.features){
+    if(d.features&&d.features.length){
+      // Assign each seismic particle a distinct quake from the feed on first load
+      const seismicPts=pts.filter(p=>p.homeType===2);
+      const quakes=d.features;
+      seismicPts.forEach((p,idx)=>{
+        const q=quakes[idx%quakes.length];
+        const mag=q.properties.mag||1;
+        const place=q.properties.place||'unknown';
+        const depth=q.geometry&&q.geometry.coordinates?Math.round(q.geometry.coordinates[2]):null;
+        const minsAgo=Math.round((Date.now()-q.properties.time)/60000);
+        const timeLabel=minsAgo<1?'just now':minsAgo===1?'1 min ago':`${minsAgo} min ago`;
+        p.lastEvent=`M${mag.toFixed(1)} — ${place.slice(0,22)} · ${timeLabel}`;
+        p.lastEventType='seismic';
+        // Brighter for bigger/more recent quakes
+        p.base=0.1+Math.min(mag/7,1)*0.35;
+        p.energy=p.base+Math.random()*0.1;
+      });
+
+      // Fire events only for quakes newer than last check
       d.features.forEach(f=>{
         if(f.properties.time>lastQuakeTs){
           const depth=f.geometry&&f.geometry.coordinates?Math.round(f.geometry.coordinates[2]):null;
@@ -553,7 +573,7 @@ async function fetchSeismic(){
           lastQuakeTs=Math.max(lastQuakeTs,f.properties.time);
         }
       });
-      if(lastQuakeTs===0&&d.features.length)lastQuakeTs=d.features[0].properties.time;
+      if(lastQuakeTs===0)lastQuakeTs=d.features[0].properties.time;
       document.getElementById('s2').innerHTML=`SEISMIC &nbsp;<span>${d.features.length}/hr</span>`;
     }
   }catch(e){
